@@ -17,33 +17,43 @@ def convert_to_mono(audio_path):
         sound.export(audio_path, format="wav")
         print("Converted audio to mono.")
 
-def transcribe_audio(audio_path):
-    """Transcribe the given audio file using Google Speech-to-Text"""
+def split_audio(audio_path, chunk_length_ms=59000):
+    """Split the audio into smaller chunks (under 1 minute)"""
+    sound = AudioSegment.from_wav(audio_path)
+    chunks = []
+    for i in range(0, len(sound), chunk_length_ms):
+        chunk = sound[i:i + chunk_length_ms]
+        chunk_path = f"chunk_{i // chunk_length_ms}.wav"
+        chunk.export(chunk_path, format="wav")
+        chunks.append(chunk_path)
+    return chunks
+
+def transcribe_audio_chunks(chunk_paths):
+    """Transcribe each audio chunk using Google Speech-to-Text and concatenate results"""
     client = speech.SpeechClient()
-
-    # Convert the audio to mono before processing
-    convert_to_mono(audio_path)
-
-    # Load audio file and get sample rate
-    with wave.open(audio_path, "rb") as audio_file:
-        sample_rate = audio_file.getframerate()
-
-    with open(audio_path, "rb") as audio_file:
-        audio_content = audio_file.read()
-
-    audio = speech.RecognitionAudio(content=audio_content)
-
-    config = speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=sample_rate,  # Use the sample rate from the WAV file
-        language_code="en-US",
-    )
-
-    response = client.recognize(config=config, audio=audio)
-
     transcription = ""
-    for result in response.results:
-        transcription += result.alternatives[0].transcript + " "
+
+    for chunk_path in chunk_paths:
+        with wave.open(chunk_path, "rb") as audio_file:
+            sample_rate = audio_file.getframerate()
+
+        with open(chunk_path, "rb") as audio_file:
+            audio_content = audio_file.read()
+
+        audio = speech.RecognitionAudio(content=audio_content)
+
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=sample_rate,  # Use the sample rate from the WAV file
+            language_code="en-US",
+        )
+
+        # Call synchronous recognition for each chunk
+        response = client.recognize(config=config, audio=audio)
+
+        # Concatenate each chunk's transcription
+        for result in response.results:
+            transcription += result.alternatives[0].transcript + " "
 
     return transcription.strip()
 
@@ -71,8 +81,8 @@ def correct_transcription(transcription):
     else:
         return transcription
 
-def generate_audio_from_text(transcription_text):
-    """Generate audio from text using Google Text-to-Speech with a male voice"""
+def generate_audio_from_text(transcription_text, original_audio_duration):
+    """Generate audio from text using Google Text-to-Speech, adjusting the rate to match original duration."""
     client = texttospeech.TextToSpeechClient()
 
     synthesis_input = texttospeech.SynthesisInput(text=transcription_text)
@@ -83,8 +93,15 @@ def generate_audio_from_text(transcription_text):
         ssml_gender=texttospeech.SsmlVoiceGender.MALE
     )
 
+    # Calculate speaking rate to match the original duration
+    # Word count of transcription divided by video duration gives words/sec, then adjust the rate accordingly
+    words_per_minute = len(transcription_text.split()) / original_audio_duration * 60
+    normal_wpm = 150  # Normal speaking rate is around 150 WPM
+    speaking_rate = words_per_minute / normal_wpm
+
     audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+        speaking_rate=speaking_rate  # Adjust speaking rate to match original duration
     )
 
     response = client.synthesize_speech(
@@ -102,9 +119,27 @@ def replace_audio_in_video(video_path, audio_path, output_path):
     """Replace the audio in the video file with the new audio"""
     video = mp.VideoFileClip(video_path)
     audio = mp.AudioFileClip(audio_path)
+
+    # Trim or loop audio to match the video's duration
+    if audio.duration > video.duration:
+        audio = audio.subclip(0, video.duration)  # Trim the audio to match the video duration
+    elif audio.duration < video.duration:
+        silence_duration = video.duration - audio.duration
+        silence = mp.AudioClip(lambda t: 0, duration=silence_duration)  # Add silence if audio is shorter
+        audio = mp.concatenate_audioclips([audio, silence])
+
     video = video.set_audio(audio)
-    video.write_videofile(output_path, codec='libx264', audio_codec='aac')
-    print(f'Output video saved to {output_path}')
+
+    try:
+        # Save the final video with the new audio
+        video.write_videofile(output_path, codec='libx264', audio_codec='aac')
+        print(f'Output video saved to {output_path}')
+    finally:
+        # Close video and audio resources properly
+        video.close()
+        audio.close()
+        del video
+        del audio
 
 def main():
     st.title("AI-Generated Voice for Video")
@@ -124,23 +159,33 @@ def main():
         video_clip = mp.VideoFileClip(video_path)
         video_clip.audio.write_audiofile(audio_path)
 
-        # Step 3: Transcribe audio
-        transcription = transcribe_audio(audio_path)
+        # Convert audio to mono
+        convert_to_mono(audio_path)
+
+        # Step 3: Split the audio into chunks (under 1 minute each)
+        audio_chunks = split_audio(audio_path)
+
+        # Step 4: Transcribe the audio chunks
+        transcription = transcribe_audio_chunks(audio_chunks)
         st.write("Original Transcription:", transcription)
         
-        # Step 4: Correct transcription using GPT-4o
+        # Step 5: Correct transcription using GPT-4o
         corrected_transcription = correct_transcription(transcription)
         st.write("Corrected Transcription:", corrected_transcription)
 
-        # Step 5: Generate new audio with corrected transcription
-        output_audio_path = generate_audio_from_text(corrected_transcription)
+        # Step 6: Generate new audio with corrected transcription, adjusting rate to match the original audio duration
+        output_audio_path = generate_audio_from_text(corrected_transcription, video_clip.duration)
 
-        # Step 6: Replace audio in the original video with new audio
+        # Step 7: Replace audio in the original video with new audio, ensuring sync
         output_video_path = "output_video.mp4"
         replace_audio_in_video(video_path, output_audio_path, output_video_path)
 
         # Display the final video
         st.video(output_video_path)
+
+        # Close the video file clip
+        video_clip.close()
+        del video_clip
 
 if __name__ == "__main__":
     main()
