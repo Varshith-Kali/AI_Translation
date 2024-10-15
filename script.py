@@ -2,15 +2,32 @@ import os
 import streamlit as st
 import requests
 from google.cloud import speech, texttospeech
+import moviepy.editor as mp
+from pydub import AudioSegment
+import wave
 
 # Set Google Cloud credentials
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Workspace\\Curious_PM_Task\\curious-pm-task-506e4459ec02.json"
+
+def convert_to_mono(audio_path):
+    """Convert audio to mono if it's not already"""
+    sound = AudioSegment.from_wav(audio_path)
+    if sound.channels > 1:
+        sound = sound.set_channels(1)
+        sound.export(audio_path, format="wav")
+        print("Converted audio to mono.")
 
 def transcribe_audio(audio_path):
     """Transcribe the given audio file using Google Speech-to-Text"""
     client = speech.SpeechClient()
 
-    # Load audio file
+    # Convert the audio to mono before processing
+    convert_to_mono(audio_path)
+
+    # Load audio file and get sample rate
+    with wave.open(audio_path, "rb") as audio_file:
+        sample_rate = audio_file.getframerate()
+
     with open(audio_path, "rb") as audio_file:
         audio_content = audio_file.read()
 
@@ -18,17 +35,17 @@ def transcribe_audio(audio_path):
 
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=16000,
+        sample_rate_hertz=sample_rate,  # Use the sample rate from the WAV file
         language_code="en-US",
     )
 
     response = client.recognize(config=config, audio=audio)
-    
+
     transcription = ""
     for result in response.results:
-        transcription += result.alternatives[0].transcript
+        transcription += result.alternatives[0].transcript + " "
 
-    return transcription
+    return transcription.strip()
 
 def correct_transcription(transcription):
     """Correct the transcription using Azure OpenAI GPT-4o"""
@@ -62,7 +79,7 @@ def generate_audio_from_text(transcription_text):
 
     voice = texttospeech.VoiceSelectionParams(
         language_code="en-US",
-        name="en-US-Wavenet-D",  # Valid male voice
+        name="en-US-Wavenet-D",  # Male voice
         ssml_gender=texttospeech.SsmlVoiceGender.MALE
     )
 
@@ -81,29 +98,49 @@ def generate_audio_from_text(transcription_text):
 
     return output_audio_path
 
-def main():
-    st.title("AI-Generated Voice for Video")  # Updated title
+def replace_audio_in_video(video_path, audio_path, output_path):
+    """Replace the audio in the video file with the new audio"""
+    video = mp.VideoFileClip(video_path)
+    audio = mp.AudioFileClip(audio_path)
+    video = video.set_audio(audio)
+    video.write_videofile(output_path, codec='libx264', audio_codec='aac')
+    print(f'Output video saved to {output_path}')
 
-    audio_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
+def main():
+    st.title("AI-Generated Voice for Video")
+
+    video_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
     
-    if audio_file is not None:
+    if video_file is not None:
         st.write("Processing audio...")
 
-        # Step 1: Transcribe audio
-        audio_path = audio_file.name
-        with open(audio_path, "wb") as f:
-            f.write(audio_file.getbuffer())
+        # Step 1: Save uploaded video file
+        video_path = video_file.name
+        with open(video_path, "wb") as f:
+            f.write(video_file.getbuffer())
         
+        # Step 2: Extract audio from the video
+        audio_path = "temp_audio.wav"
+        video_clip = mp.VideoFileClip(video_path)
+        video_clip.audio.write_audiofile(audio_path)
+
+        # Step 3: Transcribe audio
         transcription = transcribe_audio(audio_path)
         st.write("Original Transcription:", transcription)
         
-        # Step 2: Correct transcription using GPT-4o
+        # Step 4: Correct transcription using GPT-4o
         corrected_transcription = correct_transcription(transcription)
         st.write("Corrected Transcription:", corrected_transcription)
 
-        # Step 3: Generate new audio with corrected transcription
+        # Step 5: Generate new audio with corrected transcription
         output_audio_path = generate_audio_from_text(corrected_transcription)
-        st.audio(output_audio_path)
+
+        # Step 6: Replace audio in the original video with new audio
+        output_video_path = "output_video.mp4"
+        replace_audio_in_video(video_path, output_audio_path, output_video_path)
+
+        # Display the final video
+        st.video(output_video_path)
 
 if __name__ == "__main__":
     main()
