@@ -70,18 +70,6 @@ def transcribe_audio_chunks(chunk_paths):
     return transcription.strip()
 
 
-def filter_filler_words(transcription):
-    filler_words = ["umm", "uh", "hmm", "ah", "like", "you know"]
-    transcription_words = transcription.split()
-    filtered_transcription = []
-    for word in transcription_words:
-        if word.lower() in filler_words:
-            filtered_transcription.append("...")
-        else:
-            filtered_transcription.append(word)
-    return " ".join(filtered_transcription)
-
-
 def correct_transcription(transcription):
     azure_openai_key = "22ec84421ec24230a3638d1b51e3a7dc"
     azure_openai_endpoint = "https://internshala.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-08-01-preview"
@@ -100,6 +88,7 @@ def correct_transcription(transcription):
 
         # Ensure all variations of the unwanted line are removed
         unwanted_phrases = [
+            "Sure, here's the corrected transcription:",
             "Corrected Transcription:",
             "Certainly! Here's a corrected version of the transcription:",
             "Here is the corrected version:"
@@ -112,8 +101,6 @@ def correct_transcription(transcription):
         return corrected_transcription
     else:
         return transcription
-
-
 
 
 def generate_audio_with_natural_flow(transcription_text, original_audio_duration, word_timings):
@@ -165,13 +152,22 @@ def replace_audio_in_video(video_path, audio_path, output_path):
 
 
 def main():
-    st.title("AI-Generated Voice for Video")
+    st.markdown("<h1 style='color:#FF6347; font-weight: bold;'>AI-Generated Voice for Video</h1>", unsafe_allow_html=True)
+    
     video_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
+    
     if video_file is not None:
-        st.write("Processing audio...")
         video_path = video_file.name
         with open(video_path, "wb") as f:
             f.write(video_file.getbuffer())
+        
+        # Display original video
+        st.subheader("Original Video:")
+        st.video(video_path)
+
+        # "Processing audio..." below the original video
+        st.markdown("<h3 style='color:#FF6347; font-weight: bold;'>Processing audio...</h3>", unsafe_allow_html=True)
+
         audio_path = "temp_audio.wav"
         video_clip = mp.VideoFileClip(video_path)
         video_clip.audio.write_audiofile(audio_path)
@@ -179,14 +175,24 @@ def main():
         audio_chunks = split_audio(audio_path)
         word_timings = get_word_timing_from_audio(audio_chunks)
         transcription = transcribe_audio_chunks(audio_chunks)
-        st.write("Original Transcription:", transcription)
-        filtered_transcription = filter_filler_words(transcription)
-        st.write("Filtered Transcription:", filtered_transcription)
-        corrected_transcription = correct_transcription(filtered_transcription)
-        st.write("Corrected Transcription:", corrected_transcription)
+        
+        # Original Transcription
+        st.markdown("<h5 style='color:#FF6347; font-weight: bold;'>Original Transcription:</h5>", unsafe_allow_html=True)
+        st.text_area("", transcription, height=150)
+        
+        corrected_transcription = correct_transcription(transcription)
+        
+        # Corrected Transcription
+        st.markdown("<h5 style='color:#FF6347; font-weight: bold;'>Corrected Transcription:</h5>", unsafe_allow_html=True)
+        st.text_area("", corrected_transcription, height=150)
+        
+        # Generate new audio and replace in video
         output_audio_path = generate_audio_with_natural_flow(corrected_transcription, video_clip.duration, word_timings)
         output_video_path = "output_video.mp4"
         replace_audio_in_video(video_path, output_audio_path, output_video_path)
+        
+        # Display the new video
+        st.subheader("Modified Video:")
         st.video(output_video_path)
         
         # Cleanup video clip resources
