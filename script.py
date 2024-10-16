@@ -57,6 +57,18 @@ def transcribe_audio_chunks(chunk_paths):
 
     return transcription.strip()
 
+def filter_filler_words(transcription):
+    """Remove filler words and leave gaps for natural pauses"""
+    filler_words = ["umm", "uh", "hmm", "ah", "like", "you know"]
+    transcription_words = transcription.split()
+    filtered_transcription = []
+    for word in transcription_words:
+        if word.lower() in filler_words:
+            filtered_transcription.append("...")  # Leave gap for natural pause
+        else:
+            filtered_transcription.append(word)
+    return " ".join(filtered_transcription)
+
 def correct_transcription(transcription):
     """Correct the transcription using Azure OpenAI GPT-4o"""
     azure_openai_key = "22ec84421ec24230a3638d1b51e3a7dc"
@@ -73,6 +85,7 @@ def correct_transcription(transcription):
     }
 
     response = requests.post(azure_openai_endpoint, headers=headers, json=data)
+
     
     if response.status_code == 200:
         result = response.json()
@@ -85,20 +98,21 @@ def generate_audio_from_text(transcription_text, original_audio_duration):
     """Generate audio from text using Google Text-to-Speech, adjusting the rate to match original duration."""
     client = texttospeech.TextToSpeechClient()
 
-    synthesis_input = texttospeech.SynthesisInput(text=transcription_text)
+    # Calculate the average speaking rate based on transcription length and original duration
+    word_count = len(transcription_text.split())
+    average_speaking_rate = word_count / original_audio_duration  # words per second
 
+    # Normal speaking rate for English is around 150 words per minute (~2.5 words/second)
+    default_rate = 2.5  # Adjust this based on your original audio
+    speaking_rate = average_speaking_rate / default_rate
+
+    # Generate audio with the adjusted speaking rate
+    synthesis_input = texttospeech.SynthesisInput(text=transcription_text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="en-US",
         name="en-US-Wavenet-D",  # Male voice
         ssml_gender=texttospeech.SsmlVoiceGender.MALE
     )
-
-    # Calculate speaking rate to match the original duration
-    # Word count of transcription divided by video duration gives words/sec, then adjust the rate accordingly
-    words_per_minute = len(transcription_text.split()) / original_audio_duration * 60
-    normal_wpm = 150  # Normal speaking rate is around 150 WPM
-    speaking_rate = words_per_minute / normal_wpm
-
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3,
         speaking_rate=speaking_rate  # Adjust speaking rate to match original duration
@@ -114,6 +128,7 @@ def generate_audio_from_text(transcription_text, original_audio_duration):
         print(f'Generated audio saved to {output_audio_path}')
 
     return output_audio_path
+
 
 def replace_audio_in_video(video_path, audio_path, output_path):
     """Replace the audio in the video file with the new audio"""
@@ -169,14 +184,18 @@ def main():
         transcription = transcribe_audio_chunks(audio_chunks)
         st.write("Original Transcription:", transcription)
         
-        # Step 5: Correct transcription using GPT-4o
-        corrected_transcription = correct_transcription(transcription)
+        # Step 5: Filter filler words
+        filtered_transcription = filter_filler_words(transcription)
+        st.write("Filtered Transcription:", filtered_transcription)
+        
+        # Step 6: Correct transcription using GPT-4o
+        corrected_transcription = correct_transcription(filtered_transcription)
         st.write("Corrected Transcription:", corrected_transcription)
 
-        # Step 6: Generate new audio with corrected transcription, adjusting rate to match the original audio duration
+        # Step 7: Generate new audio with corrected transcription without stretching words
         output_audio_path = generate_audio_from_text(corrected_transcription, video_clip.duration)
 
-        # Step 7: Replace audio in the original video with new audio, ensuring sync
+        # Step 8: Replace audio in the original video with new audio, ensuring sync
         output_video_path = "output_video.mp4"
         replace_audio_in_video(video_path, output_audio_path, output_video_path)
 
