@@ -7,7 +7,7 @@ from pydub import AudioSegment
 import wave
 import io
 
-# Set Google Cloud credentials
+
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Workspace\\Curious_PM_Task\\curious-pm-task-506e4459ec02.json"
 
 def convert_to_mono(audio_path):
@@ -82,11 +82,12 @@ def correct_transcription(transcription):
         "max_tokens": 500
     }
     response = requests.post(azure_openai_endpoint, headers=headers, json=data)
+    
     if response.status_code == 200:
         result = response.json()
-        corrected_transcription = result['choices'][0]['message']['content']
+        corrected_transcription = result['choices'][0]['message']['content'].strip()
 
-        # Ensure all variations of the unwanted line are removed
+        # List of unwanted phrases to remove
         unwanted_phrases = [
             "Sure, here's the corrected transcription:",
             "Corrected Transcription:",
@@ -94,13 +95,14 @@ def correct_transcription(transcription):
             "Here is the corrected version:"
         ]
         
-        # Strip out any unwanted phrases
+        # Remove any unwanted phrases
         for phrase in unwanted_phrases:
             corrected_transcription = corrected_transcription.replace(phrase, "").strip()
 
         return corrected_transcription
     else:
         return transcription
+
 
 
 def generate_audio_with_natural_flow(transcription_text, original_audio_duration, word_timings):
@@ -152,7 +154,11 @@ def replace_audio_in_video(video_path, audio_path, output_path):
 
 
 def main():
+    # Title in red color with padding below
     st.markdown("<h1 style='color:#FF6347; font-weight: bold;'>AI-Generated Voice for Video</h1>", unsafe_allow_html=True)
+    
+    # Adding padding
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # 30px of space between title and uploader
     
     video_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
     
