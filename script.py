@@ -28,9 +28,13 @@ def split_audio(audio_path, chunk_length_ms=59000):
     return chunks
 
 
-def get_word_timing_from_audio(chunk_paths):
+def get_sentence_timing_from_audio(chunk_paths):
     client = speech.SpeechClient()
-    word_timings = []
+    sentence_timings = []
+    sentence = ""
+    sentence_start_time = None
+    filler_words = ["umm", "hmm", "uh", "ah", "erm"]  # Add more filler words if needed
+
     for chunk_path in chunk_paths:
         with wave.open(chunk_path, "rb") as audio_file:
             sample_rate = audio_file.getframerate()
@@ -44,10 +48,30 @@ def get_word_timing_from_audio(chunk_paths):
             enable_word_time_offsets=True
         )
         response = client.recognize(config=config, audio=audio)
+
         for result in response.results:
             for word_info in result.alternatives[0].words:
-                word_timings.append((word_info.word, word_info.start_time.total_seconds(), word_info.end_time.total_seconds()))
-    return word_timings
+                word = word_info.word.lower()
+                start_time = word_info.start_time.total_seconds()
+                end_time = word_info.end_time.total_seconds()
+
+                if sentence_start_time is None:
+                    sentence_start_time = start_time
+
+                if word in filler_words or word.endswith("."):
+                    # End of sentence when we hit filler word or punctuation
+                    if sentence:
+                        sentence_timings.append((sentence.strip(), sentence_start_time, end_time))
+                    sentence = ""
+                    sentence_start_time = None
+                else:
+                    sentence += " " + word
+
+    # Handle any leftover sentence
+    if sentence:
+        sentence_timings.append((sentence.strip(), sentence_start_time, end_time))
+        
+    return sentence_timings
 
 
 def transcribe_audio_chunks(chunk_paths):
@@ -104,35 +128,40 @@ def correct_transcription(transcription):
         return transcription
 
 
-
-def generate_audio_with_natural_flow(transcription_text, original_audio_duration, word_timings):
+def generate_audio_with_sentence_timing(corrected_transcription, sentence_timings):
     client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=transcription_text)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="en-US",
-        name="en-US-Wavenet-D",
-        ssml_gender=texttospeech.SsmlVoiceGender.MALE
-    )
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-    )
-    response = client.synthesize_speech(
-        input=synthesis_input, voice=voice, audio_config=audio_config
-    )
-    output_audio_path = "output_with_natural_flow.wav"
-    with open(output_audio_path, "wb") as out:
-        out.write(response.audio_content)
 
-    sound = AudioSegment.from_wav(output_audio_path)
-    final_sound = AudioSegment.silent(duration=int(original_audio_duration * 1000))
-    word_index = 0
-    for word, start_time, end_time in word_timings:
-        word_duration = int((end_time - start_time) * 1000)
-        word_audio = sound[word_index:word_index + word_duration]
-        final_sound = final_sound.overlay(word_audio, start_time * 1000)
-        word_index += word_duration
+    # Split corrected transcription into sentences
+    corrected_sentences = corrected_transcription.split(". ")  # Assumes sentences end with ". "
+    
+    final_sound = AudioSegment.silent(duration=int(sentence_timings[-1][2] * 1000))  # Duration based on last sentence
 
+    for idx, (sentence, start_time, end_time) in enumerate(sentence_timings):
+        if idx < len(corrected_sentences):
+            corrected_sentence = corrected_sentences[idx]
+        else:
+            # If there are fewer corrected sentences, use the original sentence
+            corrected_sentence = sentence
+
+        synthesis_input = texttospeech.SynthesisInput(text=corrected_sentence)
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="en-US",
+            name="en-US-Wavenet-D",
+            ssml_gender=texttospeech.SsmlVoiceGender.MALE
+        )
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+        )
+        response = client.synthesize_speech(
+            input=synthesis_input, voice=voice, audio_config=audio_config
+        )
+        
+        sentence_audio = AudioSegment.from_wav(io.BytesIO(response.audio_content))
+        final_sound = final_sound.overlay(sentence_audio, position=int(start_time * 1000))
+
+    output_audio_path = "output_with_sentence_timing.wav"
     final_sound.export(output_audio_path, format="wav")
+    
     return output_audio_path
 
 
@@ -179,7 +208,7 @@ def main():
         video_clip.audio.write_audiofile(audio_path)
         convert_to_mono(audio_path)
         audio_chunks = split_audio(audio_path)
-        word_timings = get_word_timing_from_audio(audio_chunks)
+        sentence_timings = get_sentence_timing_from_audio(audio_chunks)
         transcription = transcribe_audio_chunks(audio_chunks)
         
         # Original Transcription
@@ -192,14 +221,15 @@ def main():
         st.markdown("<h5 style='color:#FF6347; font-weight: bold;'>Corrected Transcription:</h5>", unsafe_allow_html=True)
         st.text_area("", corrected_transcription, height=150)
         
-        # Generate new audio and replace in video
-        output_audio_path = generate_audio_with_natural_flow(corrected_transcription, video_clip.duration, word_timings)
-        output_video_path = "output_video.mp4"
-        replace_audio_in_video(video_path, output_audio_path, output_video_path)
-        
-        # Display the new video
-        st.subheader("Modified Video:")
-        st.video(output_video_path)
+        # Generate new audio with sentence timing
+        output_audio_path = generate_audio_with_sentence_timing(corrected_transcription, sentence_timings)
+        if output_audio_path:
+            output_video_path = "output_video_with_timing.mp4"
+            replace_audio_in_video(video_path, output_audio_path, output_video_path)
+            
+            # Display the new video
+            st.subheader("Modified Video:")
+            st.video(output_video_path)
         
         # Cleanup video clip resources
         video_clip.close()
