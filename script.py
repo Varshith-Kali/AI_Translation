@@ -58,16 +58,17 @@ def get_sentence_timing_from_audio(chunk_paths):
                 if sentence_start_time is None:
                     sentence_start_time = start_time
 
+                # Use filler words or punctuation as a stopping point
                 if word in filler_words or word.endswith("."):
-                    # End of sentence when we hit filler word or punctuation
                     if sentence:
+                        # Add the sentence and its timing
                         sentence_timings.append((sentence.strip(), sentence_start_time, end_time))
                     sentence = ""
                     sentence_start_time = None
                 else:
                     sentence += " " + word
 
-    # Handle any leftover sentence
+    # Handle leftover sentence
     if sentence:
         sentence_timings.append((sentence.strip(), sentence_start_time, end_time))
         
@@ -111,15 +112,15 @@ def correct_transcription(transcription):
         result = response.json()
         corrected_transcription = result['choices'][0]['message']['content'].strip()
 
-        # List of unwanted phrases to remove
+        # List of unwanted phrases to remove from the OpenAI response
         unwanted_phrases = [
-            "Sure, here's the corrected transcription:",
-            "Corrected Transcription:",
-            "Certainly! Here's a corrected version of the transcription:",
-            "Here is the corrected version:"
+            "Sure, here is the corrected transcription:",
+            "Here is the corrected version:",
+            "I simplified and clarified the original transcription:",
+            "Certainly! Here's a corrected version of the transcription:"
         ]
         
-        # Remove any unwanted phrases
+        # Remove any unwanted phrases from the corrected transcription
         for phrase in unwanted_phrases:
             corrected_transcription = corrected_transcription.replace(phrase, "").strip()
 
@@ -128,25 +129,28 @@ def correct_transcription(transcription):
         return transcription
 
 
+
 def generate_audio_with_sentence_timing(corrected_transcription, sentence_timings):
     client = texttospeech.TextToSpeechClient()
 
     # Split corrected transcription into sentences
-    corrected_sentences = corrected_transcription.split(". ")  # Assumes sentences end with ". "
+    corrected_sentences = corrected_transcription.split(". ")  # Assuming sentences are separated by ". "
     
-    final_sound = AudioSegment.silent(duration=int(sentence_timings[-1][2] * 1000))  # Duration based on last sentence
+    # Generate a silent track based on the last sentence's end time from the original audio
+    final_sound = AudioSegment.silent(duration=int(sentence_timings[-1][2] * 1000))  # Duration based on the last sentence
 
-    for idx, (sentence, start_time, end_time) in enumerate(sentence_timings):
+    for idx, (original_sentence, start_time, end_time) in enumerate(sentence_timings):
         if idx < len(corrected_sentences):
             corrected_sentence = corrected_sentences[idx]
         else:
-            # If there are fewer corrected sentences, use the original sentence
-            corrected_sentence = sentence
+            # In case there are fewer corrected sentences, fallback to the original sentence
+            corrected_sentence = original_sentence
 
+        # Synthesize speech for the corrected sentence
         synthesis_input = texttospeech.SynthesisInput(text=corrected_sentence)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Wavenet-D",
+            name="en-US-Wavenet-D",  # You can customize the voice
             ssml_gender=texttospeech.SsmlVoiceGender.MALE
         )
         audio_config = texttospeech.AudioConfig(
@@ -155,14 +159,28 @@ def generate_audio_with_sentence_timing(corrected_transcription, sentence_timing
         response = client.synthesize_speech(
             input=synthesis_input, voice=voice, audio_config=audio_config
         )
-        
+
+        # Convert synthesized audio to an AudioSegment
         sentence_audio = AudioSegment.from_wav(io.BytesIO(response.audio_content))
+        original_sentence_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        # Trim or pad the synthesized audio to match the original sentence duration
+        if len(sentence_audio) > original_sentence_duration:
+            sentence_audio = sentence_audio[:int(original_sentence_duration)]  # Trim the audio
+        else:
+            silence = AudioSegment.silent(duration=int(original_sentence_duration - len(sentence_audio)))
+            sentence_audio = sentence_audio + silence  # Pad the audio with silence
+
+        # Overlay the corrected sentence audio at the original start time
         final_sound = final_sound.overlay(sentence_audio, position=int(start_time * 1000))
 
+    # Export the final audio with corrected sentences at correct timestamps
     output_audio_path = "output_with_sentence_timing.wav"
     final_sound.export(output_audio_path, format="wav")
     
     return output_audio_path
+
+
 
 
 def replace_audio_in_video(video_path, audio_path, output_path):
@@ -180,6 +198,12 @@ def replace_audio_in_video(video_path, audio_path, output_path):
     # Cleanup temporary audio files
     if os.path.exists(audio_path):
         os.remove(audio_path)
+
+
+    # Cleanup temporary audio files
+    if os.path.exists(audio_path):
+        os.remove(audio_path)
+
 
 
 def main():
