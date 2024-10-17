@@ -129,7 +129,6 @@ def correct_transcription(transcription):
         return transcription
 
 
-
 def generate_audio_with_sentence_timing(corrected_transcription, sentence_timings):
     client = texttospeech.TextToSpeechClient()
 
@@ -139,18 +138,28 @@ def generate_audio_with_sentence_timing(corrected_transcription, sentence_timing
     # Generate a silent track based on the last sentence's end time from the original audio
     final_sound = AudioSegment.silent(duration=int(sentence_timings[-1][2] * 1000))  # Duration based on the last sentence
 
+    # Debugging info
+    print("Corrected Sentences:", corrected_sentences)
+    print("Original Sentence Timings:", sentence_timings)
+
     for idx, (original_sentence, start_time, end_time) in enumerate(sentence_timings):
+        original_sentence_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+
         if idx < len(corrected_sentences):
             corrected_sentence = corrected_sentences[idx]
         else:
-            # In case there are fewer corrected sentences, fallback to the original sentence
+            # If there are fewer corrected sentences, fallback to the original sentence
             corrected_sentence = original_sentence
+
+        # Debugging: print original and corrected sentences with timing info
+        print(f"Original Sentence {idx}: '{original_sentence}' from {start_time}s to {end_time}s")
+        print(f"Corrected Sentence {idx}: '{corrected_sentence}'")
 
         # Synthesize speech for the corrected sentence
         synthesis_input = texttospeech.SynthesisInput(text=corrected_sentence)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Wavenet-D",  # You can customize the voice
+            name="en-US-Wavenet-D",  # Customize the voice
             ssml_gender=texttospeech.SsmlVoiceGender.MALE
         )
         audio_config = texttospeech.AudioConfig(
@@ -161,18 +170,44 @@ def generate_audio_with_sentence_timing(corrected_transcription, sentence_timing
         )
 
         # Convert synthesized audio to an AudioSegment
-        sentence_audio = AudioSegment.from_wav(io.BytesIO(response.audio_content))
-        original_sentence_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+        corrected_audio_segment = AudioSegment.from_wav(io.BytesIO(response.audio_content))
+
+        # Generate speech for the remaining part of the original sentence
+        # Remove the part of the original sentence that overlaps with the corrected sentence
+        if corrected_sentence.lower() in original_sentence.lower():
+            remaining_sentence = original_sentence.lower().replace(corrected_sentence.lower(), "").strip()
+        else:
+            remaining_sentence = original_sentence[len(corrected_sentence):].strip()
+
+        print(f"Remaining Sentence {idx}: '{remaining_sentence}'")
+
+        # Synthesize speech for the remaining part of the original sentence
+        if remaining_sentence:
+            synthesis_input_rem = texttospeech.SynthesisInput(text=remaining_sentence)
+            response_rem = client.synthesize_speech(
+                input=synthesis_input_rem, voice=voice, audio_config=audio_config
+            )
+            remaining_audio_segment = AudioSegment.from_wav(io.BytesIO(response_rem.audio_content))
+        else:
+            remaining_audio_segment = AudioSegment.silent(duration=0)
+
+        # Combine the corrected audio and remaining original sentence
+        combined_audio_segment = corrected_audio_segment + remaining_audio_segment
+
+        # Debugging: print length of combined sentence audio and original duration
+        print(f"Combined audio length: {len(combined_audio_segment)}ms, Original duration: {original_sentence_duration}ms")
 
         # Trim or pad the synthesized audio to match the original sentence duration
-        if len(sentence_audio) > original_sentence_duration:
-            sentence_audio = sentence_audio[:int(original_sentence_duration)]  # Trim the audio
-        else:
-            silence = AudioSegment.silent(duration=int(original_sentence_duration - len(sentence_audio)))
-            sentence_audio = sentence_audio + silence  # Pad the audio with silence
+        if len(combined_audio_segment) > original_sentence_duration:
+            # If the combined audio is longer, trim it
+            combined_audio_segment = combined_audio_segment[:int(original_sentence_duration)]
+        elif len(combined_audio_segment) < original_sentence_duration:
+            # If the combined audio is shorter, pad with silence to match the duration
+            silence = AudioSegment.silent(duration=int(original_sentence_duration - len(combined_audio_segment)))
+            combined_audio_segment = combined_audio_segment + silence
 
         # Overlay the corrected sentence audio at the original start time
-        final_sound = final_sound.overlay(sentence_audio, position=int(start_time * 1000))
+        final_sound = final_sound.overlay(combined_audio_segment, position=int(start_time * 1000))
 
     # Export the final audio with corrected sentences at correct timestamps
     output_audio_path = "output_with_sentence_timing.wav"
@@ -237,13 +272,13 @@ def main():
         
         # Original Transcription
         st.markdown("<h5 style='color:#FF6347; font-weight: bold;'>Original Transcription:</h5>", unsafe_allow_html=True)
-        st.text_area("", transcription, height=150)
+        st.text_area("Original Transcription", transcription, height=150, key="original_transcription")
         
         corrected_transcription = correct_transcription(transcription)
         
         # Corrected Transcription
         st.markdown("<h5 style='color:#FF6347; font-weight: bold;'>Corrected Transcription:</h5>", unsafe_allow_html=True)
-        st.text_area("", corrected_transcription, height=150)
+        st.text_area("Corrected Transcription", corrected_transcription, height=150, key="corrected_transcription")
         
         # Generate new audio with sentence timing
         output_audio_path = generate_audio_with_sentence_timing(corrected_transcription, sentence_timings)
