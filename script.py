@@ -130,36 +130,47 @@ def correct_transcription(transcription):
 
 
 def generate_audio_with_sentence_timing(corrected_transcription, sentence_timings):
+    import nltk
+    nltk.download('punkt')
+    from nltk.tokenize import sent_tokenize
+    from pydub import AudioSegment
+    import io
+    from google.cloud import texttospeech
+
     client = texttospeech.TextToSpeechClient()
 
-    # Split corrected transcription into sentences
-    corrected_sentences = corrected_transcription.split(". ")  # Assuming sentences are separated by ". "
-    
+    # Split corrected transcription into sentences using nltk's sent_tokenize
+    corrected_sentences = sent_tokenize(corrected_transcription)
+
     # Generate a silent track based on the last sentence's end time from the original audio
-    final_sound = AudioSegment.silent(duration=int(sentence_timings[-1][2] * 1000))  # Duration based on the last sentence
+    final_duration_ms = int(sentence_timings[-1][2] * 1000)
+    final_sound = AudioSegment.silent(duration=final_duration_ms)
 
     # Debugging info
     print("Corrected Sentences:", corrected_sentences)
     print("Original Sentence Timings:", sentence_timings)
 
-    for idx, (original_sentence, start_time, end_time) in enumerate(sentence_timings):
-        original_sentence_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+    # Calculate total original duration
+    total_original_duration_ms = int((sentence_timings[-1][2] - sentence_timings[0][1]) * 1000)
 
-        if idx < len(corrected_sentences):
-            corrected_sentence = corrected_sentences[idx]
-        else:
-            # If there are fewer corrected sentences, fallback to the original sentence
-            corrected_sentence = original_sentence
+    # Calculate durations for corrected sentences proportionally
+    total_corrected_sentences = len(corrected_sentences)
+    if total_corrected_sentences == 0:
+        return None
 
-        # Debugging: print original and corrected sentences with timing info
-        print(f"Original Sentence {idx}: '{original_sentence}' from {start_time}s to {end_time}s")
-        print(f"Corrected Sentence {idx}: '{corrected_sentence}'")
+    # Distribute durations proportionally among corrected sentences
+    corrected_sentence_durations = [total_original_duration_ms // total_corrected_sentences] * total_corrected_sentences
+
+    current_time_ms = int(sentence_timings[0][1] * 1000)
+
+    for idx, corrected_sentence in enumerate(corrected_sentences):
+        corrected_duration_ms = corrected_sentence_durations[idx]
 
         # Synthesize speech for the corrected sentence
         synthesis_input = texttospeech.SynthesisInput(text=corrected_sentence)
         voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Wavenet-D",  # Customize the voice
+            name="en-US-Wavenet-D",
             ssml_gender=texttospeech.SsmlVoiceGender.MALE
         )
         audio_config = texttospeech.AudioConfig(
@@ -169,51 +180,26 @@ def generate_audio_with_sentence_timing(corrected_transcription, sentence_timing
             input=synthesis_input, voice=voice, audio_config=audio_config
         )
 
-        # Convert synthesized audio to an AudioSegment
         corrected_audio_segment = AudioSegment.from_wav(io.BytesIO(response.audio_content))
 
-        # Generate speech for the remaining part of the original sentence
-        # Remove the part of the original sentence that overlaps with the corrected sentence
-        if corrected_sentence.lower() in original_sentence.lower():
-            remaining_sentence = original_sentence.lower().replace(corrected_sentence.lower(), "").strip()
+        # Adjust the audio segment to match the calculated duration
+        if len(corrected_audio_segment) > corrected_duration_ms:
+            corrected_audio_segment = corrected_audio_segment[:corrected_duration_ms]
         else:
-            remaining_sentence = original_sentence[len(corrected_sentence):].strip()
+            silence = AudioSegment.silent(duration=corrected_duration_ms - len(corrected_audio_segment))
+            corrected_audio_segment = corrected_audio_segment + silence
 
-        print(f"Remaining Sentence {idx}: '{remaining_sentence}'")
+        # Overlay the corrected audio at the current time
+        final_sound = final_sound.overlay(corrected_audio_segment, position=current_time_ms)
 
-        # Synthesize speech for the remaining part of the original sentence
-        if remaining_sentence:
-            synthesis_input_rem = texttospeech.SynthesisInput(text=remaining_sentence)
-            response_rem = client.synthesize_speech(
-                input=synthesis_input_rem, voice=voice, audio_config=audio_config
-            )
-            remaining_audio_segment = AudioSegment.from_wav(io.BytesIO(response_rem.audio_content))
-        else:
-            remaining_audio_segment = AudioSegment.silent(duration=0)
-
-        # Combine the corrected audio and remaining original sentence
-        combined_audio_segment = corrected_audio_segment + remaining_audio_segment
-
-        # Debugging: print length of combined sentence audio and original duration
-        print(f"Combined audio length: {len(combined_audio_segment)}ms, Original duration: {original_sentence_duration}ms")
-
-        # Trim or pad the synthesized audio to match the original sentence duration
-        if len(combined_audio_segment) > original_sentence_duration:
-            # If the combined audio is longer, trim it
-            combined_audio_segment = combined_audio_segment[:int(original_sentence_duration)]
-        elif len(combined_audio_segment) < original_sentence_duration:
-            # If the combined audio is shorter, pad with silence to match the duration
-            silence = AudioSegment.silent(duration=int(original_sentence_duration - len(combined_audio_segment)))
-            combined_audio_segment = combined_audio_segment + silence
-
-        # Overlay the corrected sentence audio at the original start time
-        final_sound = final_sound.overlay(combined_audio_segment, position=int(start_time * 1000))
+        current_time_ms += corrected_duration_ms
 
     # Export the final audio with corrected sentences at correct timestamps
     output_audio_path = "output_with_sentence_timing.wav"
     final_sound.export(output_audio_path, format="wav")
     
     return output_audio_path
+
 
 
 
