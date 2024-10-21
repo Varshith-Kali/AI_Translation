@@ -238,7 +238,7 @@ def main():
     video_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
 
     # Section for demo test with example videos
-    st.markdown("<h3 style='color:#FF6347;'>Demo Test Videos</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color:#FF6347;'>Demo Videos</h3>", unsafe_allow_html=True)
     
     # Adding some demo videos for the user to choose from
     demo_videos = {
