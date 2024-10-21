@@ -243,7 +243,8 @@ def main():
     # Adding some demo videos for the user to choose from
     demo_videos = {
         "Sample 1": r"Sample_Videos/Sample_vid_01.mp4",
-        "Sample 2": r"Sample_Videos/Sample_vid_02.mp4"
+        "Sample 2": r"Sample_Videos/Sample_vid_02.mp4",
+        "Sample 3": r"Sample_Videos/Sample_vid_03.mp4"
         # Add more demo video paths if needed
     }
     
