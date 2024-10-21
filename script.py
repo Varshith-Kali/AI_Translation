@@ -8,7 +8,7 @@ import wave
 import io
 
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Workspace\\Curious_PM_Task\\curious-pm-task-506e4459ec02.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"credentials.json"
 
 def convert_to_mono(audio_path):
     sound = AudioSegment.from_wav(audio_path)
