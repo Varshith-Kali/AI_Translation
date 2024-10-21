@@ -209,12 +209,13 @@ def replace_audio_in_video(video_path, audio_path, output_path):
     audio = mp.AudioFileClip(audio_path)
     video = video.set_audio(audio)
     try:
-        video.write_videofile(output_path, codec='libx264', audio_codec='aac')
+        video.write_videofile(output_path, codec='libx264', audio_codec='aac', preset='ultrafast', threads=4)
     finally:
         video.close()
         audio.close()
         del video
         del audio
+
 
     # Cleanup temporary audio files
     if os.path.exists(audio_path):
