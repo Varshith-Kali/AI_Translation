@@ -5,10 +5,16 @@ from google.cloud import speech, texttospeech
 import moviepy.editor as mp
 from pydub import AudioSegment
 import wave
+import nltk
+from nltk.tokenize import sent_tokenize
+from pydub import AudioSegment
 import io
+from google.cloud import texttospeech
 
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = r"credentials.json"
+nltk.download('punkt_tab',download_dir=".")
+nltk.data.path.append(".")
 
 def convert_to_mono(audio_path):
     sound = AudioSegment.from_wav(audio_path)
@@ -130,12 +136,8 @@ def correct_transcription(transcription):
 
 
 def generate_audio_with_sentence_timing(corrected_transcription, sentence_timings):
-    import nltk
-    nltk.download('punkt')
-    from nltk.tokenize import sent_tokenize
-    from pydub import AudioSegment
-    import io
-    from google.cloud import texttospeech
+
+
 
     client = texttospeech.TextToSpeechClient()
 
