@@ -204,8 +204,6 @@ def generate_audio_with_sentence_timing(corrected_transcription, sentence_timing
 
 
 
-
-
 def replace_audio_in_video(video_path, audio_path, output_path):
     video = mp.VideoFileClip(video_path)
     audio = mp.AudioFileClip(audio_path)
@@ -228,7 +226,6 @@ def replace_audio_in_video(video_path, audio_path, output_path):
         os.remove(audio_path)
 
 
-
 def main():
     # Title in red color with padding below
     st.markdown("<h1 style='color:#FF6347; font-weight: bold;'>AI-Generated Voice for Video</h1>", unsafe_allow_html=True)
@@ -236,17 +233,36 @@ def main():
     # Adding padding
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)  # 30px of space between title and uploader
     
+    # File uploader for user-uploaded video
     video_file = st.file_uploader("Upload a video file", type=["mp4", "wav"])
+
+    # Section for demo test with example videos
+    st.markdown("<h3 style='color:#FF6347;'>Demo Test Videos</h3>", unsafe_allow_html=True)
     
+    # Adding some demo videos for the user to choose from
+    demo_videos = {
+        "Sample 1": r"Sample_Videos/Sample_vid_01.mp4",
+        "Sample 2": r"Sample_Videos/Sample_vid_02.mp4"
+        # Add more demo video paths if needed
+    }
+    
+    # Let user select a demo video or upload their own
+    demo_video_choice = st.selectbox("Or select a demo video", options=["None"] + list(demo_videos.keys()))
+    
+    # Check if the user selects a demo video or uploads their own
+    video_path = None
     if video_file is not None:
         video_path = video_file.name
         with open(video_path, "wb") as f:
             f.write(video_file.getbuffer())
-        
-        # Display original video
+    elif demo_video_choice != "None":
+        video_path = demo_videos[demo_video_choice]
+    
+    if video_path is not None:
+        # Display the selected video (uploaded or demo)
         st.subheader("Original Video:")
         st.video(video_path)
-
+        
         # "Processing audio..." below the original video
         st.markdown("<h3 style='color:#FF6347; font-weight: bold;'>Processing audio...</h3>", unsafe_allow_html=True)
 
